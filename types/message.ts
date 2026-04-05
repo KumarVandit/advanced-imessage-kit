@@ -1,3 +1,4 @@
+import type { ParsedMessage } from "../lib/parseaple/types";
 import type { Attachment, AttachmentResponse } from "./attachment";
 import type { Chat, ChatResponse } from "./chat";
 import type { Handle, HandleResponse } from "./handle";
@@ -152,4 +153,5 @@ export type MessageResponse = {
     shareStatus?: number | null;
     shareDirection?: number | null;
     receivingFrom?: string | null;
+    parsed?: ParsedMessage;
 };

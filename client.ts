@@ -3,6 +3,7 @@ import axios, { type AxiosInstance } from "axios";
 import io from "socket.io-client";
 import { getLogger, setGlobalLogLevel, setGlobalLogToFile } from "./lib/Loggable";
 import type { LogLevel } from "./lib/Logger";
+import { parse } from "./lib/parseaple";
 import {
     AttachmentModule,
     ChatModule,
@@ -256,7 +257,21 @@ export class AdvancedIMessageKit extends EventEmitter implements TypedEventEmitt
                 }
 
                 if (args.length > 0) {
-                    super.emit(eventName, args[0]);
+                    const data = args[0];
+                    if (
+                        (eventName === "new-message" ||
+                            eventName === "updated-message" ||
+                            eventName === "message-updated") &&
+                        data &&
+                        typeof data === "object"
+                    ) {
+                        try {
+                            (data as any).parsed = parse(data as any);
+                        } catch {
+                            // Parsing should never block message delivery
+                        }
+                    }
+                    super.emit(eventName, data);
                 } else {
                     super.emit(eventName);
                 }
@@ -350,6 +365,11 @@ export class AdvancedIMessageKit extends EventEmitter implements TypedEventEmitt
                     this.processedMessages.add(msg.guid);
                     if (msg.dateCreated && msg.dateCreated > this.lastMessageTime) {
                         this.lastMessageTime = msg.dateCreated;
+                    }
+                    try {
+                        (msg as any).parsed = parse(msg);
+                    } catch {
+                        // Parsing should never block message delivery
                     }
                     super.emit("new-message", msg);
                 }
