@@ -5,7 +5,9 @@ export interface ParsedBase {
     from: string;
     isFromMe: boolean;
     timestamp: Date;
+    /** Set only when the user sent an inline reply (wire has threadOriginatorGuid or threadOriginatorPart). Not the same as Apple’s replyToGuid on every bubble. */
     replyToGuid?: string;
+    /** Reply-thread fork id from threadOriginatorGuid when present. */
     threadGuid?: string;
     effect?: string;
 }
@@ -87,6 +89,7 @@ export interface ReactionMessage extends ParsedBase {
 
 export interface EditMessage extends ParsedBase {
     type: "edit";
+    originalText?: string;
     newText: string;
     editedAt: Date;
 }
@@ -151,9 +154,15 @@ export interface ContactMessage extends ParsedBase {
     firstName?: string;
     lastName?: string;
     fullName?: string;
+    nickname?: string;
     phones: string[];
     emails: string[];
     org?: string;
+    title?: string;
+    urls: string[];
+    addresses: string[];
+    birthday?: string;
+    note?: string;
     attachmentGuid: string;
 }
 

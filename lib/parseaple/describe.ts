@@ -34,12 +34,18 @@ function dims(d?: { width: number; height: number }): string {
     return d ? ` (${d.width}x${d.height})` : "";
 }
 
+function replyPrefix(parsed: ParsedMessage): string {
+    if (!("replyToGuid" in parsed) || !parsed.replyToGuid) return "";
+    return `[reply to ${parsed.replyToGuid}] `;
+}
+
 function summarize(parsed: ParsedMessage): string {
+    const rp = replyPrefix(parsed);
     switch (parsed.type) {
         case "text": {
             const fx = parsed.effect ? ` with ${parsed.effect} effect` : "";
             const styled = parsed.styles?.length ? " (styled)" : "";
-            return `Sent a text${fx}${styled}: "${truncate(parsed.text)}"`;
+            return `${rp}Sent a text${fx}${styled}: "${truncate(parsed.text)}"`;
         }
         case "rich-link":
             return parsed.title ? `Shared a link: "${parsed.title}" (${parsed.url})` : `Shared a link: ${parsed.url}`;
@@ -77,10 +83,12 @@ function summarize(parsed: ParsedMessage): string {
 
         case "reaction": {
             const e = parsed.emoji ? ` ${parsed.emoji}` : "";
-            return `${parsed.isRemoval ? "Removed" : "Reacted with"} ${parsed.reaction}${e}`;
+            return `${parsed.isRemoval ? "Removed" : "Reacted with"} ${parsed.reaction}${e} on ${parsed.targetMessageGuid}`;
         }
-        case "edit":
-            return `Edited a message to: "${truncate(parsed.newText)}"`;
+        case "edit": {
+            const from = parsed.originalText ? `from "${truncate(parsed.originalText)}" ` : "";
+            return `Edited a message ${from}to: "${truncate(parsed.newText)}"`;
+        }
         case "unsend":
             return "Unsent a message";
 

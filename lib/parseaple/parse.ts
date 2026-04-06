@@ -27,6 +27,7 @@ import type {
     UnsendMessage,
     VideoMessage,
 } from "./types";
+import { parseVCard } from "./vcard";
 
 // --- Effects ---
 
@@ -158,15 +159,42 @@ const NUMERIC_CLASSIC: Record<number, string> = {
     2005: "question",
 };
 
+/** Server often sets replyToGuid to the previous bubble for ordering; only threadOriginator* marks a real inline reply. */
+function resolveInlineReplyTarget(msg: MessageResponse): string | undefined {
+    const hasInlineReplyThread =
+        (msg.threadOriginatorGuid != null && msg.threadOriginatorGuid !== "") ||
+        (msg.threadOriginatorPart != null && msg.threadOriginatorPart !== "");
+    if (!hasInlineReplyThread) return undefined;
+    const g = msg.replyToGuid;
+    return g != null && g !== "" ? g : undefined;
+}
+
+const MAX_CHAT_GUID_CACHE = 4096;
+const messageGuidToChatGuid = new Map<string, string>();
+
+/** chats[] is sometimes omitted on updated-message; cache by message guid when we have seen it. */
+function resolveChatGuid(msg: MessageResponse): string {
+    const fromChat = msg.chats?.[0]?.guid;
+    if (fromChat) {
+        if (messageGuidToChatGuid.size >= MAX_CHAT_GUID_CACHE) {
+            const first = messageGuidToChatGuid.keys().next().value;
+            if (first !== undefined) messageGuidToChatGuid.delete(first);
+        }
+        messageGuidToChatGuid.set(msg.guid, fromChat);
+        return fromChat;
+    }
+    return messageGuidToChatGuid.get(msg.guid) ?? "";
+}
+
 function buildBase(msg: MessageResponse): ParsedBase {
     return {
         type: "unknown",
         guid: msg.guid,
-        chatGuid: msg.chats?.[0]?.guid ?? "",
+        chatGuid: resolveChatGuid(msg),
         from: msg.handle?.address ?? (msg.isFromMe ? "me" : "unknown"),
         isFromMe: msg.isFromMe,
         timestamp: new Date(msg.dateCreated),
-        replyToGuid: msg.replyToGuid ?? undefined,
+        replyToGuid: resolveInlineReplyTarget(msg),
         threadGuid: msg.threadOriginatorGuid ?? undefined,
         effect: resolveEffect(msg.expressiveSendStyleId),
     };
@@ -375,8 +403,21 @@ function handleReaction(msg: MessageResponse, base: ParsedBase): ReactionMessage
     return { ...base, type: "reaction", reaction, emoji, isRemoval, ...target };
 }
 
+function extractOriginalText(msg: MessageResponse): string | undefined {
+    const msi = msg.messageSummaryInfo?.[0] as Record<string, any> | undefined;
+    const editedContent = msi?.editedContent as Array<{ text?: { values?: Array<{ string?: string }> } }> | undefined;
+    if (!editedContent?.length) return undefined;
+    return editedContent[0]?.text?.values?.[0]?.string ?? undefined;
+}
+
 function handleEdit(msg: MessageResponse, base: ParsedBase): EditMessage {
-    return { ...base, type: "edit", newText: msg.text ?? "", editedAt: new Date(msg.dateEdited!) };
+    return {
+        ...base,
+        type: "edit",
+        originalText: extractOriginalText(msg),
+        newText: msg.text ?? "",
+        editedAt: new Date(msg.dateEdited!),
+    };
 }
 
 function handleUnsend(msg: MessageResponse, base: ParsedBase): UnsendMessage {
@@ -568,16 +609,76 @@ function handleLocationShare(msg: MessageResponse, base: ParsedBase): LocationSh
     return result;
 }
 
+function tryParseVCardFromAttachment(att: AttachmentResponse): {
+    fullName?: string;
+    firstName?: string;
+    lastName?: string;
+    nickname?: string;
+    org?: string;
+    title?: string;
+    phones: string[];
+    emails: string[];
+    urls: string[];
+    addresses: string[];
+    birthday?: string;
+    note?: string;
+} | null {
+    const raw = att.data;
+    if (!raw || typeof raw !== "string") return null;
+
+    let text = raw.trim();
+    if (!text.includes("BEGIN:VCARD")) {
+        try {
+            const decoded = Buffer.from(text, "base64").toString("utf-8");
+            if (decoded.includes("BEGIN:VCARD")) text = decoded;
+        } catch {
+            return null;
+        }
+    }
+    if (!text.includes("BEGIN:VCARD")) return null;
+
+    const v = parseVCard(text);
+    return {
+        fullName: v.fullName,
+        firstName: v.firstName,
+        lastName: v.lastName,
+        nickname: v.nickname,
+        org: v.org,
+        title: v.title,
+        phones: v.phones,
+        emails: v.emails,
+        urls: v.urls,
+        addresses: v.addresses,
+        birthday: v.birthday,
+        note: v.note,
+    };
+}
+
+/**
+ * Socket events typically don't include attachment.data (only metadata),
+ * so phones/emails will be empty. To get full contact info, download the
+ * attachment via REST using attachmentGuid and run parseVCard() on the file.
+ */
 function handleContact(msg: MessageResponse, base: ParsedBase): ContactMessage {
     const att = msg.attachments![0]!;
     const nameFromFile = att.transferName?.replace(/\.vcf$/i, "").trim() || undefined;
+    const fromVcf = tryParseVCardFromAttachment(att);
 
     return {
         ...base,
         type: "contact",
-        fullName: nameFromFile,
-        phones: [],
-        emails: [],
+        fullName: fromVcf?.fullName ?? nameFromFile,
+        firstName: fromVcf?.firstName,
+        lastName: fromVcf?.lastName,
+        nickname: fromVcf?.nickname,
+        org: fromVcf?.org,
+        title: fromVcf?.title,
+        phones: fromVcf?.phones ?? [],
+        emails: fromVcf?.emails ?? [],
+        urls: fromVcf?.urls ?? [],
+        addresses: fromVcf?.addresses ?? [],
+        birthday: fromVcf?.birthday,
+        note: fromVcf?.note,
         attachmentGuid: att.guid,
     };
 }
